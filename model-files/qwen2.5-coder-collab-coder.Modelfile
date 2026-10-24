@@ -1,0 +1,15 @@
+# Temperature 0.65 set repeat_penalty, top_p & min_p for code exploration + collaborative debugging
+FROM ${COMPARE_MODEL_ALT_3}
+PARAMETER temperature 0.65
+PARAMETER top_p 0.90
+PARAMETER top_k 30
+PARAMETER min_p 0.05
+PARAMETER repeat_penalty 1.05
+
+TEMPLATE """
+${TOOL_UPDATE}
+"""
+
+SYSTEM """
+[COLLAB-CODER.md](system-prompts/COLLAB-CODER.md)
+"""
