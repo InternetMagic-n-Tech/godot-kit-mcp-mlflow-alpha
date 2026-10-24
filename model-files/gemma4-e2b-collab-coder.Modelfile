@@ -1,0 +1,14 @@
+# Temperature 0.2 set repeat_penalty, top_p & min_p for code exploration + collaborative debugging
+FROM ${COMPARE_MODEL_ALT_1}
+PARAMETER temperature 0.2
+PARAMETER top_p 0.95
+PARAMETER min_p 0.05
+PARAMETER repeat_penalty 1.05
+[ONE-SHOT-PARAMS.md](gemma4-specific/ONE-SHOT-PARAMS.md)
+
+SYSTEM """
+[GEMMA4-E2B-EDIT-RULES.md](system-prompts/GEMMA4-E2B-EDIT-RULES.md)
+
+
+[COLLAB-CODER.md](system-prompts/COLLAB-CODER.md)
+"""
