@@ -1,0 +1,15 @@
+# Temperature 0.1 set repeat_penalty, top_p & min_p for programming
+FROM ${COMPARE_MODEL_ALT_2}
+PARAMETER temperature 0.20
+PARAMETER top_p 0.80
+PARAMETER top_k 20
+PARAMETER min_p 0.05
+PARAMETER repeat_penalty 1.10
+
+TEMPLATE """
+${TOOL_UPDATE}
+"""
+
+SYSTEM """
+[STRICT-CODER.md](system-prompts/STRICT-CODER.md)
+"""
