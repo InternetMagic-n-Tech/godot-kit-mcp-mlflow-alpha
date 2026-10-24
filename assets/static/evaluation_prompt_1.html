@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evaluate a run</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 0; background: #1e1e1e; color: #ddd; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #999; font-size: 13px; margin: 0 0 24px; }
+  fieldset { border: 1px solid #3a3a3a; border-radius: 6px; margin: 0 0 20px; padding: 8px 16px 12px; }
+  legend { padding: 0 8px; font-weight: bold; color: #8ab4f8; }
+  .field { margin: 14px 0; }
+  .field[hidden] { display: none; }
+  .label { display: block; font-weight: 600; margin-bottom: 2px; }
+  .help { color: #999; font-size: 12px; margin-bottom: 6px; }
+  .choices { display: flex; gap: 8px; flex-wrap: wrap; }
+  .choices label { border: 1px solid #444; border-radius: 4px; padding: 4px 14px; cursor: pointer; background: #262626; }
+  .choices label:has(input:checked) { background: #1f3a5f; border-color: #8ab4f8; }
+  .choices label:has(input:disabled) { opacity: .6; cursor: not-allowed; }
+  .choices input { margin-right: 6px; }
+  .badge { font-size: 11px; color: #f9a825; margin-left: 8px; font-weight: normal; }
+  .error { color: #ef5350; font-size: 12px; min-height: 1em; margin-top: 4px; }
+  select, input[type=text], textarea { width: 100%; box-sizing: border-box; background: #262626; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 8px; font: inherit; }
+  textarea { min-height: 110px; resize: vertical; }
+  button { background: #1f3a5f; color: #fff; border: 1px solid #8ab4f8; border-radius: 4px; padding: 8px 18px; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: wait; }
+  #status { margin-top: 14px; font-size: 14px; }
+  #status.ok { color: #66bb6a; }
+  #status.fail { color: #ef5350; }
+  #status a { color: #8ab4f8; }
+  .warn { color: #f9a825; font-size: 13px; margin-bottom: 8px; }
+  .row { display: flex; gap: 8px; }
+  .row select { flex: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Evaluate a run</h1>
+  <p class="sub">Experiment: <strong id="experiment">…</strong> &middot; scores run from <span id="scale"></span> (low &rarr; high)</p>
+
+  <form id="form" novalidate>
+    <fieldset>
+      <legend>Run</legend>
+      <div class="field" data-field="runId">
+        <div class="row">
+          <select id="runId" name="runId"></select>
+          <button type="button" id="refresh">Refresh</button>
+        </div>
+        <div class="warn" id="runsWarning" hidden></div>
+        <div class="error" data-error-for="runId"></div>
+      </div>
+    </fieldset>
+
+    <div id="fields"></div>
+
+    <fieldset>
+      <legend>Extras</legend>
+      <div class="field" data-field="evaluator">
+        <label class="label" for="evaluator">Your name (optional)</label>
+        <input type="text" id="evaluator" name="evaluator" autocomplete="off">
+        <div class="error" data-error-for="evaluator"></div>
+      </div>
+      <div class="field" data-field="notes">
+        <label class="label" for="notes">Notes (optional, saved as an artifact)</label>
+        <textarea id="notes" name="notes"></textarea>
+        <div class="error" data-error-for="notes"></div>
+      </div>
+    </fieldset>
+
+    <button type="submit" id="submit">Send to MLflow</button>
+    <div id="status" role="status"></div>
+  </form>
+</main>
+
+<script>
+const form = document.getElementById('form');
+const statusEl = document.getElementById('status');
+let schema = null;
+let runs = [];
+
+function make(tag, props = {}, ...children) {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const child of children) node.append(child);
+  return node;
+}
+
+async function requestJson(url, options) {
+  const res = await fetch(url, options);
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body };
+}
+
+const metricKey = (field) => `${schema.metricPrefix}${field.key}`;
+const fieldInputs = (field) => [...form.querySelectorAll(`input[name="${field.key}"]`)];
+const fieldWrapper = (field) => form.querySelector(`[data-field="${field.key}"]`);
+const selectedRun = () => runs.find((r) => r.id === form.runId.value) || null;
+
+function choicesFor(field) {
+  if (field.type === 'bool') return [['yes', 'Yes'], ['no', 'No']];
+  const out = [];
+  for (let n = schema.scoreMin; n <= schema.scoreMax; n++) out.push([String(n), String(n)]);
+  return out;
+}
+
+function renderFields() {
+  const container = document.getElementById('fields');
+  container.replaceChildren();
+  const groups = [...new Set(schema.fields.map((f) => f.group))];
+  for (const group of groups) {
+    const set = make('fieldset', {}, make('legend', { textContent: group }));
+    for (const field of schema.fields.filter((f) => f.group === group)) {
+      const choices = make('div', { className: 'choices' });
+      for (const [value, text] of choicesFor(field)) {
+        choices.append(make('label', {}, make('input', { type: 'radio', name: field.key, value }), text));
+      }
+      const wrapper = make('div', { className: 'field' }, make('span', { className: 'label', textContent: field.label }));
+      wrapper.dataset.field = field.key;
+      if (field.help) wrapper.append(make('div', { className: 'help', textContent: field.help }));
+      wrapper.append(choices);
+      const err = make('div', { className: 'error' });
+      err.dataset.errorFor = field.key;
+      wrapper.append(err);
+      set.append(wrapper);
+    }
+    container.append(set);
+  }
+  form.addEventListener('change', updateDependents);
+}
+
+function currentBool(key) {
+  const checked = form.querySelector(`input[name="${key}"]:checked`);
+  return checked ? checked.value === 'yes' : null;
+}
+
+function updateDependents() {
+  for (const field of schema.fields.filter((f) => f.dependsOn)) {
+    fieldWrapper(field).hidden = currentBool(field.dependsOn) !== true;
+  }
+}
+
+// Lock (and show) anything the selected run already has; unlock the rest.
+function applyRunState() {
+  const run = selectedRun();
+  for (const field of schema.fields) {
+    const existing = run ? run.metrics[metricKey(field)] : undefined;
+    const inputs = fieldInputs(field);
+    const label = fieldWrapper(field).querySelector('.label');
+    label.querySelector('.badge')?.remove();
+
+    if (existing !== undefined) {
+      const wanted = field.type === 'bool' ? (existing === 1 ? 'yes' : 'no') : String(existing);
+      for (const input of inputs) {
+        input.checked = input.value === wanted;
+        input.disabled = true;
+      }
+      label.append(make('span', { className: 'badge', textContent: 'already logged' }));
+    } else {
+      for (const input of inputs) {
+        if (input.disabled) input.checked = false; // was showing a previous run's value
+        input.disabled = false;
+      }
+    }
+  }
+  for (const [name, flag] of [['evaluator', 'evaluatorLogged'], ['notes', 'notesLogged']]) {
+    const locked = Boolean(run && run[flag]);
+    form[name].disabled = locked;
+    form[name].placeholder = locked ? 'already logged for this run' : '';
+    if (locked) form[name].value = '';
+  }
+  updateDependents();
+}
+
+function runLabel(run) {
+  const when = run.startTime ? new Date(run.startTime).toLocaleString() : '';
+  const scored = Object.keys(run.metrics).length ? ' ✓ scored' : '';
+  return `${run.name || '(unnamed)'} · ${run.status} · ${when} · ${run.id.slice(0, 8)}${scored}`;
+}
+
+async function loadRuns(keepSelection = true) {
+  const previous = keepSelection ? form.runId.value : '';
+  const { ok, body } = await requestJson('/api/runs');
+  console.log('--body:', body);
+  const warning = document.getElementById('runsWarning');
+  warning.textContent = ok ? (body.warning || '') : (body.error || 'Could not load runs');
+  warning.hidden = !warning.textContent;
+  runs = ok ? body.runs : [];
+
+  form.runId.replaceChildren(make('option', { value: '', textContent: runs.length ? 'Select a run…' : 'No runs found' }));
+  for (const run of runs) {
+    console.log('--run: ', run);
+    form.runId.append(make('option', { value: run.id, textContent: runLabel(run) }));
+  }
+  if (runs.some((r) => r.id === previous)) form.runId.value = previous;
+  applyRunState();
+}
+
+function clearErrors() {
+  for (const el of form.querySelectorAll('.error')) el.textContent = '';
+}
+
+function showErrors(errors) {
+  for (const [key, message] of Object.entries(errors)) {
+    const el = form.querySelector(`[data-error-for="${key}"]`);
+    if (el) el.textContent = message;
+  }
+}
+
+function setStatus(kind, ...children) {
+  statusEl.className = kind;
+  statusEl.replaceChildren(...children);
+}
+
+// Mirrors the server rules enough to avoid a pointless round trip; the server stays the authority.
+function collect() {
+  const errors = {};
+  const values = {};
+  if (!form.runId.value) errors.runId = 'Pick a run';
+
+  for (const field of schema.fields) {
+    const wrapper = fieldWrapper(field);
+    const inputs = fieldInputs(field);
+    if (wrapper.hidden || inputs.every((i) => i.disabled)) continue;
+    const checked = inputs.find((i) => i.checked);
+    if (!checked) {
+      errors[field.key] = 'Required';
+    } else {
+      values[field.key] = field.type === 'bool' ? checked.value === 'yes' : Number(checked.value);
+    }
+  }
+  if (form.evaluator.value.length > schema.maxNameLength) errors.evaluator = `At most ${schema.maxNameLength} characters`;
+  if (form.notes.value.length > schema.maxNotesLength) errors.notes = `At most ${schema.maxNotesLength} characters`;
+
+  return { errors, payload: { runId: form.runId.value, evaluator: form.evaluator.value, notes: form.notes.value, values } };
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  clearErrors();
+  setStatus('');
+
+  const { errors, payload } = collect();
+  if (Object.keys(errors).length) {
+    showErrors(errors);
+    setStatus('fail', 'Please fix the highlighted fields.');
+    return;
+  }
+
+  const button = document.getElementById('submit');
+  button.disabled = true;
+  try {
+    const { ok, status, body } = await requestJson('/api/evaluations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (status === 400 && body.errors) {
+      showErrors(body.errors);
+      setStatus('fail', 'Please fix the highlighted fields.');
+    } else if (!ok) {
+      setStatus('fail', body.error || `Request failed (${status})`);
+    } else {
+      const skipped = body.skipped.length ? ` Skipped (already on the run): ${body.skipped.join(', ')}.` : '';
+      setStatus('ok', `Logged ${body.logged.length} item(s) to MLflow.${skipped} `, make('a', { href: body.runUrl, target: '_blank', rel: 'noopener', textContent: 'Open run' }));
+      form.notes.value = '';
+      await loadRuns(true);
+    }
+  } catch (err) {
+    setStatus('fail', `Could not reach the server: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+form.runId.addEventListener('change', applyRunState);
+document.getElementById('refresh').addEventListener('click', () => loadRuns(true));
+
+(async function init() {
+  const { body } = await requestJson('/api/schema');
+  schema = body;
+  document.getElementById('experiment').textContent = schema.experiment;
+  document.getElementById('scale').textContent = `${schema.scoreMin} to ${schema.scoreMax}`;
+  renderFields();
+  await loadRuns(false);
+})();
+</script>
+</body>
+</html>
