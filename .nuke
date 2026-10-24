@@ -1,0 +1,6 @@
+/docs
+/godot_docs_db
+/runs
+/chunks-*.json
+/*.log
+/*.zip
