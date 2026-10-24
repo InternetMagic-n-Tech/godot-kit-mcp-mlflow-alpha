@@ -37,13 +37,10 @@ async function main() {
       argv.model,
     // gemma4:e2b models
       `ollama/${process.env.COMPARE_KIT_ALT_1}`, `ollama/${process.env.COMPARE_KIT_TERSE_ALT_1}`,
-      `ollama/${process.env.COMPARE_KIT_LOW_TEMP_ALT_1}`, `ollama/${process.env.COMPARE_KIT_HIGH_TEMP_ALT_1}`,
     // qwen2.5 models
       `ollama/${process.env.COMPARE_KIT_ALT_2}`, `ollama/${process.env.COMPARE_KIT_TERSE_ALT_2}`,
-      `ollama/${process.env.COMPARE_KIT_LOW_TEMP_ALT_2}`, `ollama/${process.env.COMPARE_KIT_HIGH_TEMP_ALT_2}`,
     // qwen-2.5-coder models
       `ollama/${process.env.COMPARE_KIT_ALT_3}`, `ollama/${process.env.COMPARE_KIT_TERSE_ALT_3}`,
-      `ollama/${process.env.COMPARE_KIT_LOW_TEMP_ALT_3}`, `ollama/${process.env.COMPARE_KIT_HIGH_TEMP_ALT_3}`,
   ])].filter(s => !!s);
   const CONFIGS = [...new Set([
     argv.mcpConfig,
