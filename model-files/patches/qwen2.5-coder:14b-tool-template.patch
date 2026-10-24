@@ -1,0 +1,20 @@
+--- model-files/patches/qwen2.5-coder:14b-tool-template.old.tooltemplate	2026-10-18 10:57:46.558608964 -0400
++++ model-files/patches/qwen2.5-coder:14b-tool-template.new.tooltemplate	2026-10-18 11:01:18.315420917 -0400
+@@ -28,10 +28,13 @@
+ {{- if eq .Role "user" }}<|im_start|>user
+ {{ .Content }}<|im_end|>
+ {{ else if eq .Role "assistant" }}<|im_start|>assistant
+-{{ if .Content }}{{ .Content }}
+-{{- else if .ToolCalls }}<tool_call>
+-{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+-{{ end }}</tool_call>
++{{- if .Content }}
++{{ .Content }}
++{{- end }}
++{{- range .ToolCalls }}
++<tool_call>
++{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
++</tool_call>
+ {{- end }}{{ if not $last }}<|im_end|>
+ {{ end }}
+ {{- else if eq .Role "tool" }}<|im_start|>user
