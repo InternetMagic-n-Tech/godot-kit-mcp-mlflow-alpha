@@ -47,6 +47,7 @@ const transparentSpawn = (exec, spawnParms = [], env, cwd, opts = {}, custom = n
   })
   return { promise, child };
 };
+
 const muteTSpawn = () => {
   const devNull = new Writable({ write: (_c, _e, cb) => cb() });
   return {
@@ -55,4 +56,5 @@ const muteTSpawn = () => {
   };
 };
 
-module.exports = { transparentSpawn, muteTSpawn };
+const silentSpawn = (exec, spawnParms, env, cwd, opts, custom = muteTSpawn) => transparentSpawn(exec, spawnParms, env, cwd, opts, custom);
+module.exports = { transparentSpawn, muteTSpawn, silentSpawn };

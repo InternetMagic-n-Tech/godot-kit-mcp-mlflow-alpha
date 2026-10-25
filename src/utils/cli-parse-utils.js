@@ -83,6 +83,16 @@ function mcpConfigAndGodotDirsYargsOptions(yargs, describe = "Path to the Godot 
     describe: 'Path to the mcp-config.json file to read GODOT_PATH from',
     type: 'string',
     default: process.env.MCP_CONFIG_PATH || 'mcp-config.json',
+  })
+  .option('mcp-session', {
+    describe: 'Path to the mcp-config.json file to read GODOT_PATH from',
+    type: 'string',
+    default: process.env.MCP_SESSION || '',
+  })
+  .option('mcp-system-prompt', {
+    describe: 'Absolute Path to the md file passed into kit',
+    type: 'string',
+    default: process.env.KIT_SYSTEM_PROMPT || '',
   });
 }
 
