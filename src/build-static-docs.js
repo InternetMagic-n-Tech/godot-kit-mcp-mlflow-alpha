@@ -84,7 +84,7 @@ async function main () {
   async function processTemplateMarkdown(filePath, context, rootContext = null) {
     const fullFilePath = path.resolve(filePath);
     const fileObj = path.parse(fullFilePath);
-    let content = await fs.promises.readFile(filePath, 'utf-8');
+    let content = await fs.promises.readFile(filePath, 'utf8');
 
     // 1. Inject template variables like ${project.name}
     content = content.replace(/\$\{([^}]+)\}/g, (_, expression) => {
@@ -132,9 +132,10 @@ async function main () {
   await emptyDir(`${docsPath}${dirMod}`);
   const dirModModelFiles = jsUtils.checkLTrim(path.resolve(modelFilesDir), ROOT_DIR);
   await emptyDir(`${docsPath}${dirModModelFiles}`);
-  const [mdFiles, modelFileFiles] = await Promise.all([
+  const [mdFiles, modelFileFiles, modelFileMdFiles] = await Promise.all([
     getMarkdownFiles(promptsPath),
-    getModelFileFiles(modelFilesDir)
+    getModelFileFiles(modelFilesDir),
+    getMarkdownFiles(`${modelFilesDir}/system-prompts`),
   ]);
 
   const templateVariables = {
@@ -175,6 +176,26 @@ async function main () {
     },
   });
   console.log('Completed:', ...texts.reduce((acc, item) => ([...acc, "\n - ", `${jsUtils.checkLTrim(docsPath, ROOT_DIR + '/')}/${jsUtils.checkLTrim(item.docsPath, '/')}`]), []));
+
+  const modelFileMds = await pool({
+    collection: modelFileMdFiles,
+    maxConcurrency: 1,
+    task: async (modelFileMdFile, n) => {
+      const fileObj = path.parse(path.resolve(modelFileMdFile));
+      const dirMod = jsUtils.checkLTrim(fileObj.dir, ROOT_DIR);
+      IS_VERBOSE && console.log(' - ', jsUtils.checkLTrim(dirMod + '/' + path.parse(modelFileMdFile).base, '/'));
+      const result = await processTemplateMarkdown(modelFileMdFile, templateVariables);
+      fs.mkdirSync(`${docsPath}${dirMod}`, { recursive: true });
+      fs.writeFileSync(`${docsPath}${dirMod}/${fileObj.base}`, result.content);
+      if (IS_VERBOSE && n >= mdFiles.length - 1) {
+        console.log('');
+      }
+      return result;
+    },
+  });
+  console.log('Completed:', ...modelFileMds.reduce((acc, item) => ([...acc, "\n - ", `${jsUtils.checkLTrim(docsPath, ROOT_DIR + '/')}/${jsUtils.checkLTrim(item.docsPath, '/')}`]), []));
+
+
 
   const modelActualTemplateCache = {};
   const modelFiles = await pool({

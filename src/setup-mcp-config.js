@@ -68,6 +68,8 @@ const SERVER_BUILDERS = {
     environment: {
       GODOT_PATH: c.godotPath,
       GODOT_MCP_HEADLESS: "true",
+      DISPLAY: ":99",
+      GODOT_MCP_CHILD_ENV_ALLOW: "DISPLAY",
       GODOT_MCP_ALLOW_UNRESTRICTED: "true",
       ...(isMcpDebug ? { DEBUG : "true" } : { }),
     },

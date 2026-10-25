@@ -18,12 +18,12 @@ const argv = commonYargsOptions(godotCoverageYargsOptions(yargs(hideBin(process.
   .option('target', {
     describe: 'Coverage target percentage',
     type: 'number',
-    default: 0,
+    default: -1, // off
   })
   .option('file-target', {
     describe: 'Per-file coverage target percentage',
     type: 'number',
-    default: 0,
+    default: -1, // off
   })
   .option('verbosity', {
     describe: 'Verbosity level (0=none, 1=filenames, 3=failing files, 4=partial, 5=all files)',

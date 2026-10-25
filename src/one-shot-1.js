@@ -15,8 +15,8 @@ const path = require('node:path');
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
 const { transparentSpawn } = require('./utils/spawn-helper');
-const { pick3GodotExperimentYargsOptions, ollamaYargsOptions, godotCoverageYargsOptions, commonYargsOptions, docsAndPromptsYargsOptions, collectStream, parseBool } = require('./utils/cli-parse-utils');
-const { startRun } = require('./utils/mlflow');
+const { mcpConfigAndGodotDirsYargsOptions, pick3GodotExperimentYargsOptions, ollamaYargsOptions, godotCoverageYargsOptions, commonYargsOptions, docsAndPromptsYargsOptions, collectStream, parseBool } = require('./utils/cli-parse-utils');
+const { logTrace, startRun } = require('./utils/mlflow');
 const jsUtils = require('./utils/js-utils');
 const identHelpers = require('./utils/ident-helpers');
 const { resetMatch3Project, godotHeadlessProjectTouch, getGodotExecFromConfig } = require('./utils/godot-helpers');
@@ -28,14 +28,13 @@ const ROOT_DIR = path.join(__dirname, '..');
 const IS_VERBOSE_CAPTURE = true;
 // const IS_VERBOSE_CAPTURE = false;
 const IS_VERBOSE_TOOL_CAPTURE = true;
-// const IS_VERBOSE_TOOL_CAPTURE = false;
-const PROCESS_TIMEOUT = 10 * 60 * 60 * 1000;//10 MINS?
+// const PROCESS_TIMEOUT = 10 * 60 * 60 * 1000;//10 MINS?
 
 function parseArgs() {
-  return pick3GodotExperimentYargsOptions(ollamaYargsOptions( godotCoverageYargsOptions(commonYargsOptions(docsAndPromptsYargsOptions(
+  return mcpConfigAndGodotDirsYargsOptions(pick3GodotExperimentYargsOptions(ollamaYargsOptions( godotCoverageYargsOptions(commonYargsOptions(docsAndPromptsYargsOptions(
     yargs(hideBin(process.argv))
       .usage('$0', 'Run one Kit one-shot and record it in MLflow')
-  )))))
+  ))))))
     .option('max-steps', {
       describe: `Kit's 'max-steps' param`,
       type: 'number',
@@ -48,6 +47,20 @@ function parseArgs() {
 
 const clean = (n) => String(n || 'unknown').replace(/[^\w.\- /]/g, '_');
 
+async function logTraceForRun({ run, times, prompt, cleanModelName, result }) {
+  return logTrace({
+    experimentId: run.experimentId,
+    name: cleanModelName,
+    startTimeMs: times.t0,
+    endTimeMs: times.te || Date.now(),
+    inputs: { prompt: identHelpers.streamlineLogStrings(prompt) },
+    outputs: { response: identHelpers.streamlineLogStrings(typeof result === 'object' ? (result?.response || '') : (result || '')) },
+  })
+  .catch((e) => {
+    console.error('Log-Trace() failed', e);
+    return Promise.resolve();
+  });
+}
 function classifyError(text) {
   if (/is required|invalid (argument|input|json)|unexpected (field|property)/i.test(text)) return 'schema';
   if (/could not find old_text|old_text|matches multiple/i.test(text)) return 'edit_match';
@@ -120,6 +133,9 @@ function summarize(result) {
 
 async function main() {
   const argv = parseArgs();
+  if (argv.mcpSystemPrompt && !fs.existsSync(argv.mcpSystemPrompt)) {
+    throw new Error(`MCP System Prompt Path (for kit) was passed but does not exist.  Is the path '${argv.mcpSystemPrompt}' correct?`);
+  }
   const mcpConfig = argv.mcpConfig;
   const godotExecFromConfig = fs.existsSync(mcpConfig)
     ? getGodotExecFromConfig(mcpConfig)
@@ -138,20 +154,21 @@ async function main() {
       godotExec: godotExecFromConfig,
     });
   }
-  const promptsPath = path.join(ROOT_DIR, argv.promptsDir);
+  const promptsPath = path.join(ROOT_DIR, argv.docsDir, argv.promptsDir);
   const dirMod = jsUtils.checkLTrim(path.resolve(promptsPath), ROOT_DIR);
-  const promptFile = path.resolve(ROOT_DIR, argv.docsDir, jsUtils.checkLTrim(dirMod, '/'), argv.promptFile);
+  const promptFile = path.resolve(ROOT_DIR, jsUtils.checkLTrim(dirMod, '/'), argv.promptFile);
   if (!fs.existsSync(promptFile)) {
     throw new Error(`Prompt file not found: ${promptFile}`);
   }
   await initDiff(projectDir, argv.pathPrefix);
   const prompt = fs.readFileSync(promptFile, 'utf8');
-  const relPromptFile = jsUtils.checkLTrim(promptFile, `${ROOT_DIR}/`);
+  const relPromptFile = jsUtils.checkLTrim(promptFile, `${ROOT_DIR}/${argv.docsDir}/`);
   const promptHash = identHelpers.makeSha(relPromptFile);
 
   // One source of truth: these feed both the Kit CLI and the MLflow params.
   const cfg = {
     config: mcpConfig,
+    ...(argv.session ? { session: argv.session, } : {}),
     model: argv.model,
     provider_url: argv.providerUrl,
     max_steps: Math.min(Math.max(argv.maxSteps, 1), 2000),
@@ -161,16 +178,18 @@ async function main() {
     stream: false,
   };
   const parsedConfigFile = JSON.parse(fs.readFileSync(path.resolve(cfg.config), 'utf8'));
+  const mcpSystemPrompt = argv.mcpSystemPrompt ? argv.mcpSystemPrompt : '';
   const kitArgs = [
     // '--config', cfg.config,
     '--config', path.resolve(cfg.config),
-    '--no-session',
+    ...(cfg.session ? ['--session', cfg.session] : ['--no-session']),
     ...(cfg.json ? ['--json'] : []),
     ...(typeof cfg.stream === 'boolean' ? [`--stream=${cfg.stream.toString()}`] : []),
     ...(cfg.auto_compact ? ['--auto-compact'] : []),
     '--model', cfg.model,
     '--provider-url', cfg.provider_url,
     '--max-steps', String(cfg.max_steps),
+    ...(mcpSystemPrompt  ? ['--system-prompt', mcpSystemPrompt] : []), // kit doesn't use model's system-prompt
     // '--temperature', String(cfg.temperature),
     prompt, // positional prompt last => non-interactive one-shot
   ];
@@ -183,14 +202,21 @@ async function main() {
   const run = await startRun({
     experiment: argv.experiment,
     // runName: `${path.basename(promptFile, path.extname(promptFile))}-M:${modelHash}-P:${promptHash}`,
-    runName: `${cleanModelName} ${!isGodotRag ? 'No-':'With-'}Godot-RAGDB-${!isFetchTool ? 'No-':'With-'}Fetch ${path.basename(promptFile, path.extname(promptFile))}`,
+    runName: `${cleanModelName} ${!isGodotRag ? 'No-' : 'With-'}Godot-RAGDB-${!isFetchTool ? 'No-' : 'With-'}Fetch ${path.basename(promptFile, path.extname(promptFile))}`,
     params: {
       ...cfg,
       ...(IS_VERBOSE_CAPTURE ? {
-        prompt_file: path.basename(promptFile),
+        prompt_file: relPromptFile,
+        prompt_basename: path.basename(promptFile, path.extname(promptFile)),
         prompt_sha256: promptHash,
+        prompt_contents_sha256: identHelpers.readFileUtf8Sha(promptFile),
         model_sha256: modelHash,
         model_raw: cfg.model,
+        ...(mcpSystemPrompt ? {
+          system_prompt: path.basename(mcpSystemPrompt, path.extname(mcpSystemPrompt)),
+          system_prompt_contents_sha256: identHelpers.readFileUtf8Sha(mcpSystemPrompt),
+          system_prompt_sha256: identHelpers.makeSha(jsUtils.checkLTrim(mcpSystemPrompt, `${ROOT_DIR}/${argv.docsDir}/`)),
+        } : {}),
       } : {}),
       model: cleanModelName,
       config_slug: configSlug,
@@ -203,11 +229,18 @@ async function main() {
   let finished = false;
   let child = null;
 
+  let result;
+  let resultUploadPromise = Promise.resolve();
+  const times = { t0: Date.now() };
+
   // Don't leave Kit running or the MLflow run stuck on RUNNING if we're interrupted.
   for (const sig of ['SIGINT', 'SIGTERM']) {
-    process.once(sig, async () => {
+    process.once(sig, () => {
       if (child) child.kill('SIGTERM');
-      if (!finished) await run.end('KILLED').catch(() => {});
+      if (!finished) {
+        logTraceForRun({ run, times, prompt, cleanModelName, result });
+        run.end('KILLED').catch(() => { });
+      }
       process.exit(130);
     });
   }
@@ -220,6 +253,7 @@ async function main() {
       ...(argv.experiment ? { MLFLOW_EXPERIMENT_NAME: argv.experiment } : {})
     };
     const t0 = Date.now();
+    times.t0 = t0;
     const spawned = transparentSpawn('kit', kitArgs, kitEnv, `${ROOT_DIR}/${projectDir}`);
     let timeoutId = null;
     if (typeof PROCESS_TIMEOUT !== 'undefined') {
@@ -228,12 +262,17 @@ async function main() {
           clearTimeout(timeoutId);
           timeoutId = null;
         }
-        spawned.kill(0);
+        spawned.kill();
+        process.exit(124);
       }, PROCESS_TIMEOUT);
     }
     const out = collectStream(spawned.child.stdout);
     const err = collectStream(spawned.child.stderr);
     const onKitFinish = async () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
       await Promise.all([out.done, err.done]);
       const stdout = out.text();
       const stderr = err.text();
@@ -261,14 +300,17 @@ async function main() {
     } catch (e) {
       exitError = e; // non-zero exit; still record what we got
     }
-
-    const seconds = (Date.now() - t0) / 1000;
+    const te = Date.now();
+    times.te = te;
+    const seconds = (te - t0) / 1000;
     process.off('SIGINT', onProcessExit);
     process.off('SIGTERM', onProcessExit);
 
     const { stdout, promise } = await onKitFinish();
-    let result = stdout;
-    let resultUploadPromise = Promise.resolve();
+    const notesMdPath = path.join(ROOT_DIR, argv.projectDir, 'NOTES.md');
+    const progressMdPath = path.join(ROOT_DIR, argv.projectDir, 'PROGRESS.md');
+    let notesMdUploadPromise = Promise.resolve();
+    let progressMdUploadPromise = Promise.resolve();
 
     try {
       result = cfg.json ? JSON.parse(stdout) : stdout;
@@ -278,13 +320,21 @@ async function main() {
 
     if (cfg.json && result?.response) {
       resultUploadPromise = run.uploadArtifact('RESPONSE.md', result.response);
-    } else if (result) {
+    } else if (typeof result === 'string' && result) {
       resultUploadPromise = run.uploadArtifact('KIT-OUTPUT.txt', result);
+    }
+    if (fs.existsSync(notesMdPath)) {
+      notesMdUploadPromise = run.uploadArtifact('NOTES.md', fs.readFileSync(notesMdPath, 'utf8'));
+    }
+    if (fs.existsSync(progressMdPath)) {
+      progressMdUploadPromise = run.uploadArtifact('PROGRESS.md', fs.readFileSync(progressMdPath, 'utf8'));
     }
     await Promise.all([
       promise.stdout,
       promise.stderr,
       resultUploadPromise,
+      notesMdUploadPromise,
+      progressMdUploadPromise,
       run.logMetrics({
         response_length: (result?.response || '').length,
         duration_s: seconds,
@@ -312,7 +362,12 @@ async function main() {
     status = !exitError && result ? 'FINISHED' : 'FAILED';
   } finally {
     finished = true;
-    await run.end(status).catch(console.error);
+
+    await logTraceForRun({ run, times, prompt, cleanModelName, result });
+
+    // lock the experiment
+    await run.end(status).catch(console.error.bind(console, 'Run.end() failed'));
+
     console.log(`MLflow run ${run.id} ${status}`);
     if (parseBool(process.env.IS_OLLAMA_PROXY)) {
       process.exit(status === 'FAILED' ? 1 : 0);
@@ -327,7 +382,6 @@ function startMain() {
   });
 }
 if (parseBool(process.env.IS_OLLAMA_PROXY)) {
-  // BROKEN!
   // debugging kit to ensure no params are changing our results will not work if you have a custom
   // env variable `OLLAMA_URL` (using any non-defaults with 'ollama-url' yarg param)
   const ollmam_url_obj = new URL(process.env.OLLAMA_URL || 'http://localhost:11434');
