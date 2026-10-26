@@ -1,103 +1,33 @@
-# Godot `kit` MCP/ACP Suite
+Forks only 🔱 please
+
+
+# Godot `kit` MCP/ACP Ollam/Llama Suite
 
 This project is a demo how to setup a MCP/ACP coding loop with godot and how to measure those results using ML-Flow & Local Llama Models.
+
+`llama.cpp` coming soon 🔱❗
+
 
 ## Setup
 
  - Download as zip `https://github.com/KenneyNL/Starter-Kit-Match-3/tree/4ddb3d2a50cbf247c79cafe9e7884d7d8f99c012` extract contents to `Starter-Kit-Match-3-org/` into the repo root
- - Copy `Starter-Kit-Match-3-org/` to `Starter-Kit-Match-3/`.  From the new folder `git init; git add .; git commit -m "Init"`
- - Install `kit` from [kit github](https://github.com/mark3labs/kit) `curl -fsSL https://raw.githubusercontent.com/mark3labs/kit/master/install.sh | bash -s -- --version v0.113.0 --no-provider-check`
+ - Install `kit` from [kit github](https://github.com/mark3labs/kit) `curl -fsSL https://raw.githubusercontent.com/mark3labs/kit/master/install.sh | bash -s -- --version v0.136.0 --no-provider-check`
  - Install `mlflow` using `git` & `docker`
 ```
 git clone --depth 1 --filter=blob:none --sparse https://github.com/mlflow/mlflow.git
 cd mlflow
+git fetch origin tag v3.17.2 --no-tags
+git checkout v3.17.2
 git sparse-checkout set docker-compose
 cd docker-compose
 cp .env.dev.example .env
 ```
- - Create `mlflow/docker-compose/assistant_config.json` with contents `{"providers": { "mlflow_gateway": { "selected": true, "model": "Local" } } }`
- - Change `mlflow/docker-compose/docker-compose.yml`
-```
-services:
-  postgres:
-...
-    volumes:
-      # Resolves relative to this compose file (mlflow/docker-compose/),
-      # so ../../ lands in the folder you run the command from.
-      - ../../docker/volumes/postgres:/var/lib/postgresql/data
-...
-  storage:
-...
-    user: "${UID:-1000}:${GID:-1000}"
-    volumes:
-      - ../../docker/volumes/storage:/data
-...
-  mlflow:
-...
-    ports:
-      - "${MLFLOW_PORT}:${MLFLOW_PORT}"
-...
-    environment:
-...
-      MLFLOW_ENABLE_REMOTE_ASSISTANT: "true"
-      MLFLOW_ENABLE_ASSISTANT_SANDBOX: "true"
-      OLLAMA_HOST: ${OLLAMA_HOST}
-      OPENAI_API_BASE: ${OPENAI_API_BASE}
-...
-    volumes:
-...
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./assistant_config.json:/root/.mlflow/assistant/config.json
-...
-    command:
-      - /bin/bash
-      - -c
-      - |
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq && apt-get install -y -qq curl socat docker.io
-        pip install --no-cache-dir psycopg2-binary boto3 "mlflow[genai,auth]"
-        socat TCP-LISTEN:11434,fork,reuseaddr TCP:host.docker.internal:11434 &
-        mlflow server \
-          --backend-store-uri "${MLFLOW_BACKEND_STORE_URI}" \
-          --artifacts-destination "${MLFLOW_ARTIFACTS_DESTINATION}" \
-          --serve-artifacts \
-          --host "${MLFLOW_HOST}" \
-          --port "${MLFLOW_PORT}"
-...
-    extra_hosts://host.docker.internal:11434
-      - "host.docker.internal:host-gateway"
-...
-```
- - Create `mlflow/docker-compose/.env`
-```
-# PostgreSQL
-POSTGRES_USER=mypguser
-POSTGRES_PASSWORD=mysecurepassword
-POSTGRES_DB=mlflow
-PGPORT=5432
-
-# --- RustFS (S3-compatible artifact storage) ---
-AWS_ACCESS_KEY_ID=s3admin
-AWS_SECRET_ACCESS_KEY=s3mysecurekey
-AWS_DEFAULT_REGION=us-east-1
-RUSTFS_CONSOLE_ENABLE=true
-S3_BUCKET=mlflow
-MLFLOW_S3_ENDPOINT_URL=http://storage:9000
-MLFLOW_ARTIFACTS_DESTINATION=s3://${S3_BUCKET}
-
-# --- MLflow server ---
-MLFLOW_VERSION=v3.16.1
-MLFLOW_HOST=0.0.0.0
-MLFLOW_PORT=5000
-MLFLOW_BACKEND_STORE_URI=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${PGPORT}/${POSTGRES_DB}
-
-MLFLOW_AUTH_DISABLE=true
-MLFLOW_ENABLE_REMOTE_ASSISTANT=true
-OLLAMA_MODEL=gemma4:26b # your preferred model
-OLLAMA_HOST="http://host.docker.internal:11434"
-OPENAI_API_BASE="http://host.docker.internal:11434/v1"
-OPENAI_API_KEY=none
-```
+ - Create **assistant_config.json** with `patch -p1 < patches/mlflow/docker-compose/assistant_config.json.patch`
+    - Update this patch using `diff -u /dev/null mlflow/docker-compose/assistant_config.json > patches/mlflow/docker-compose/assistant_config.json.patch`
+ - Change **docker-compose** `mlflow/docker-compose/docker-compose.yml` with `git apply patches/mlflow/docker-compose/docker-compose.yml.patch`
+    - Update this patch using `diff -u mlflow/docker-compose/archive-docker-compose.yml mlflow/docker-compose/docker-compose.yml > patches/mlflow/docker-compose/docker-compose.yml.patch`
+ - Change **docker-compose .env** with `patch -p1 < patches/mlflow/docker-compose/.env.patch`
+    - Update this patch using `diff -u /dev/null mlflow/docker-compose/.env > patches/mlflow/docker-compose/.env.patch`
  - Run `mkdir -p docker/volumes/postgres docker/volumes/storage; chmod -R 777 docker/volumes/storage; sudo chown -R 1000:1000 docker/volumes/storage`
  - Run from Repo Root `docker compose -f mlflow/docker-compose/docker-compose.yml up`
  - Use `ollama`/`llama.cpp` to pull `mxbai-embed-large` and/or `nomic-embed-text`
@@ -121,6 +51,7 @@ OPENAI_API_KEY=none
  - Python Venv: `python3 -m venv venv`
  - Python Venv: `python3 -m venv godot-rag-venv`
  - Install UV: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
 
  ## Environment Variables
 
