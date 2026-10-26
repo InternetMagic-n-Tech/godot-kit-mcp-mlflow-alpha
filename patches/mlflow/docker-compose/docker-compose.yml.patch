@@ -1,0 +1,95 @@
+--- mlflow/docker-compose/v3-15-1.yml	2026-10-25 20:35:19.028093934 -0400
++++ mlflow/docker-compose/docker-compose.yml	2026-10-18 15:45:25.914852268 -0400
+@@ -1,7 +1,3 @@
+-volumes:
+-  pgdata:
+-  storage-data:
+-
+ services:
+   postgres:
+     image: postgres:15
+@@ -12,7 +8,9 @@
+       POSTGRES_DB: ${POSTGRES_DB}
+       PGPORT: ${PGPORT}
+     volumes:
+-      - pgdata:/var/lib/postgresql/data
++      # Resolves relative to this compose file (mlflow/docker-compose/),
++      # so ../../ lands in the folder you run the command from.
++      - ../../docker/volumes/postgres:/var/lib/postgresql/data
+     ports:
+       - ${PGPORT}:${PGPORT}
+     healthcheck:
+@@ -34,8 +32,9 @@
+     ports:
+       - "9000:9000"
+       - "9001:9001"
++    user: "${UID:-1000}:${GID:-1000}"
+     volumes:
+-      - storage-data:/data
++      - ../../docker/volumes/storage:/data
+     restart: unless-stopped
+     healthcheck:
+       test: ["CMD-SHELL", 'curl -s http://127.0.0.1:9000/health | grep -q ''"status":"ok"''']
+@@ -92,14 +91,32 @@
+       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+       MLFLOW_S3_IGNORE_TLS: "true"
+ 
++      MLFLOW_LOGGING_LEVEL: "DEBUG"
+       # Server host/port
+       MLFLOW_HOST: ${MLFLOW_HOST}
+       MLFLOW_PORT: ${MLFLOW_PORT}
++
++      # --- MLflow Assistant: the ONLY two env vars that actually exist in
++      # 3.16.1 for this feature (confirmed via grep against
++      # mlflow/environment_variables.py in the running container). Every
++      # other ASSISTANT/REMOTE_ACCESS-named var previously in this file
++      # (MLFLOW_ASSISTANT_ALLOW_REMOTE_ACCESS, MLFLOW_ENABLE_ASSISTANT_REMOTE_ACCESS,
++      # MLFLOW_ASSISTANT_SANDBOX without ENABLE_) does not exist in the
++      # source and was silently ignored.
++      MLFLOW_ENABLE_REMOTE_ASSISTANT: "true"
++      MLFLOW_ENABLE_ASSISTANT_SANDBOX: "true"
++
++      # Gateway and routing
++      OLLAMA_HOST: ${OLLAMA_HOST}
++      OPENAI_API_BASE: ${OPENAI_API_BASE}
+     command:
+       - /bin/bash
+       - -c
+       - |
+-        pip install --no-cache-dir psycopg2-binary boto3
++        export DEBIAN_FRONTEND=noninteractive
++        apt-get update -qq && apt-get install -y -qq curl socat docker.io
++        pip install --no-cache-dir psycopg2-binary boto3 "mlflow[genai,auth]"
++        socat TCP-LISTEN:11434,fork,reuseaddr TCP:host.docker.internal:11434 &
+         mlflow server \
+           --backend-store-uri "${MLFLOW_BACKEND_STORE_URI}" \
+           --artifacts-destination "${MLFLOW_ARTIFACTS_DESTINATION}" \
+@@ -108,6 +125,16 @@
+           --port "${MLFLOW_PORT}"
+     ports:
+       - "${MLFLOW_PORT}:${MLFLOW_PORT}"
++    volumes:
++      # Gives the mlflow container access to the host's Docker daemon, so the
++      # Assistant (with MLFLOW_ENABLE_REMOTE_ASSISTANT=true) can launch its
++      # own hardened sandbox containers for Bash tool / coding-agent work.
++      # This effectively grants root-equivalent access to the host — only
++      # enable the assistant/this mount on a trusted local machine.
++      - /var/run/docker.sock:/var/run/docker.sock
++      - ./assistant_config.json:/root/.mlflow/assistant/config.json
++      # - ./assistant_config.json:/root/.mlflow/assistant_config.json
++      # - ${GODOT_PROJECT_DIR}:${GODOT_PROJECT_DIR}
+     healthcheck:
+       test:
+         [
+@@ -119,6 +146,11 @@
+       interval: 10s
+       timeout: 5s
+       retries: 30
++    extra_hosts:
++      # Lets the container resolve the host machine, so mlflow (and anything
++      # you exec into it) can reach the Ollama server running natively on
++      # your host at http://host.docker.internal:11434
++      - "host.docker.internal:host-gateway"
+ 
+ networks:
+   default:

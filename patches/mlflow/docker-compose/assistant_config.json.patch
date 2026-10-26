@@ -1,0 +1,11 @@
+--- /dev/null	2026-10-25 05:49:11.866000179 -0400
++++ mlflow/docker-compose/assistant_config.json	2026-10-11 08:44:06.338507148 -0400
+@@ -0,0 +1,8 @@
++{
++  "providers": {
++    "mlflow_gateway": {
++      "selected": true,
++      "model": "Local"
++    }
++  }
++}
